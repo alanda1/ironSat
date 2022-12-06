@@ -5,8 +5,10 @@ use std::io::{BufRead, BufReader};
 use std::ops::Index;
 
 enum SolverMove {
-    Propagate { variable: i32, clause: i32 },
+    Propagate { variable: i32, clause: usize },
     Decide(i32),
+    Sat(),
+    Conflict(usize),
 }
 
 enum AssignmentResult {
@@ -92,7 +94,7 @@ impl Clause {
 
 impl Assignment {
     fn from_movelist(list: &Vec<Vec<SolverMove>>, vars: usize) -> Assignment {
-        let mut initial_assignments: Vec<Option<bool>> = vec![None; vars];
+        let mut initial_assignments: Vec<Option<bool>> = vec![None; vars+1]; //0 will always be empty
         for level in list {
             for assignment in level {
                 let variable: i32 = match assignment {
@@ -101,6 +103,8 @@ impl Assignment {
                         clause: _,
                     } => *variable,
                     SolverMove::Decide(variable) => *variable,
+                    SolverMove::Sat() => panic!("Attempted to generate assignment from completed movelist"),
+                    SolverMove::Conflict(_) => panic!("Attempted to generate assignment from movelist with conflict"),
                 };
                 let index: usize = variable.abs() as usize;
                 initial_assignments[index] = Some(variable > 0);
@@ -137,9 +141,21 @@ fn main() {
         return;
     }
 
-    let config = initial_config.unwrap();
-    println!("{}", config.to_string());
+    let state = initial_config.unwrap();
+    println!("{}", state.to_string());
+
+    loop {
+        let next_move = move_from_state(&state);
+        match next_move {
+            SolverMove::Propagate { variable, clause } => todo!(),
+            SolverMove::Decide(_) => todo!(),
+            SolverMove::Sat() => todo!(),
+            SolverMove::Conflict(_) => todo!(),
+        }
+    }
     // dbg!(args);
+
+
 }
 
 fn parse_input(path: &str) -> Result<SolverState, Box<dyn Error>> {
@@ -217,9 +233,31 @@ fn parse_input(path: &str) -> Result<SolverState, Box<dyn Error>> {
 fn move_from_state(state: &SolverState) -> SolverMove{
     let len = state.clauselist.len();
     let assignment = Assignment::from_movelist(&state.movelist, len);
-    for clause in &state.clauselist  {
+    let mut sat_clauses = 0;
+    // Loop through clauses and check for possible propagates or conflicts
+    for clause_index in 0..state.clauselist.len()  {
+        let clause = &state.clauselist[clause_index];
+        let clause_result = clause.check_assignment(&assignment);
         
+        match clause_result {
+            Some(status) => match status {
+                AssignmentResult::Propagate(var) => return SolverMove::Propagate { variable: var, clause: clause_index },
+                AssignmentResult::Conflict() => return SolverMove::Conflict(clause_index),
+                AssignmentResult::Sat() => sat_clauses+=1,
+            },
+            None => continue,
+        }
     }
 
-    SolverMove::Decide(0)
+    if sat_clauses == len{
+        return SolverMove::Sat();
+    }
+
+    // If no move found decide
+    for var in 1..assignment.len(){
+        if assignment[var].is_none(){
+            return SolverMove::Decide(var as i32);
+        }
+    }
+    panic!("No possible decisions found")
 }
