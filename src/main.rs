@@ -2,132 +2,169 @@ use std::env;
 use std::error::Error;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::ops::Index;
 
-enum SolverMove {
-    Propagate { variable: i32, clause: usize },
-    Decide(i32),
-    Sat(),
-    Conflict(usize),
-}
+use assignment::Assignment;
+use clause::{AssignmentResult, Clause};
+use solver_state::SolverState;
 
-enum AssignmentResult {
-    Propagate(i32),
-    Conflict(),
-    Sat(),
-}
-struct SolverState {
-    clauselist: Vec<Clause>,
-    movelist: Vec<Vec<SolverMove>>,
-}
+use crate::solver_state::SolverMove;
 
-struct Clause {
-    vars: Vec<i32>,
-}
+mod assignment;
+mod clause;
+mod solver_state;
+// enum SolverMove {
+//     Propagate { variable: i32, clause: usize },
+//     Decide(i32),
+//     Sat(),
+//     Conflict(usize),
+// }
 
-struct Assignment {
-    assignments: Vec<Option<bool>>,
-}
+// enum AssignmentResult {
+//     Propagate(i32),
+//     Conflict(),
+//     Sat(),
+// }
+// struct SolverState {
+//     clauselist: Vec<Clause>,
+//     movelist: Vec<Vec<SolverMove>>,
+//     vars: usize,
+//     clauses: usize
+// }
 
-impl SolverState {
-    fn new() -> SolverState {
-        SolverState {
-            clauselist: Vec::new(),
-            movelist: Vec::new(),
-        }
-    }
+// struct Clause {
+//     vars: Vec<i32>,
+// }
 
-    fn add_clause(&mut self, clause: Clause) {
-        self.clauselist.push(clause);
-    }
-}
+// struct Assignment {
+//     assignments: Vec<Option<bool>>,
+// }
 
-impl ToString for SolverState {
-    fn to_string(&self) -> String {
-        let mut buf = "".to_owned();
-        buf = buf + "Clauses:\n";
-        for clause in &self.clauselist {
-            for var in &clause.vars {
-                buf = buf + &var.to_string() + " ";
-            }
-            buf = buf + "\n";
-        }
-        buf = buf + "Done!";
-        return buf.to_string();
-    }
-}
+// impl SolverState {
+//     fn new() -> SolverState {
+//         SolverState {
+//             clauselist: Vec::new(),
+//             movelist: Vec::new(),
+//             vars: 0,
+//             clauses: 0,
+//         }
+//     }
 
-impl Clause {
-    fn from_vec(varlist: Vec<i32>) -> Clause {
-        Clause { vars: varlist }
-    }
+//     fn add_clause(&mut self, clause: Clause) {
+//         self.clauselist.push(clause);
+//     }
+// }
 
-    fn check_assignment(&self, assignment: &Assignment) -> Option<AssignmentResult> {
-        let mut last_available: Option<i32> = None;
-        for var in &self.vars {
-            let index: usize = var.abs() as usize;
+// impl ToString for SolverState {
+//     fn to_string(&self) -> String {
+//         let mut buf = "".to_owned();
+//         buf = buf + "Clauses:\n";
+//         for clause in &self.clauselist {
+//             for var in &clause.vars {
+//                 buf = buf + &var.to_string() + " ";
+//             }
+//             buf = buf + "\n";
+//         }
+//         buf = buf + "\nAssignment:\n";
 
-            let var_assignment = assignment[index];
-            match var_assignment {
-                Some(value) => {
-                    if value {
-                        return Some(AssignmentResult::Sat());
-                    }
-                }
-                None => {
-                    if last_available.is_some() {
-                        // There are two available variables that could be assigned so no propagate
-                        return None;
-                    } else {
-                        last_available = Some(*var)
-                    }
-                }
-            }
-        }
+//         let assignment = Assignment::from_movelist(&self.movelist, self.vars);
+//         buf = buf + &assignment.to_string();
+//         return buf.to_string();
+//     }
+// }
 
-        match last_available {
-            Some(var) => Some(AssignmentResult::Propagate(var)),
-            None => Some(AssignmentResult::Conflict()),
-        }
-    }
-}
+// impl Clause {
+//     fn from_vec(varlist: Vec<i32>) -> Clause {
+//         Clause { vars: varlist }
+//     }
 
-impl Assignment {
-    fn from_movelist(list: &Vec<Vec<SolverMove>>, vars: usize) -> Assignment {
-        let mut initial_assignments: Vec<Option<bool>> = vec![None; vars+1]; //0 will always be empty
-        for level in list {
-            for assignment in level {
-                let variable: i32 = match assignment {
-                    SolverMove::Propagate {
-                        variable,
-                        clause: _,
-                    } => *variable,
-                    SolverMove::Decide(variable) => *variable,
-                    SolverMove::Sat() => panic!("Attempted to generate assignment from completed movelist"),
-                    SolverMove::Conflict(_) => panic!("Attempted to generate assignment from movelist with conflict"),
-                };
-                let index: usize = variable.abs() as usize;
-                initial_assignments[index] = Some(variable > 0);
-            }
-        }
+//     fn check_assignment(&self, assignment: &Assignment) -> Option<AssignmentResult> {
+//         let mut last_available: Option<i32> = None;
+//         for var in &self.vars {
+//             let index: usize = var.abs() as usize;
 
-        return Assignment {
-            assignments: initial_assignments,
-        };
-    }
+//             let var_assignment = assignment[index];
+//             match var_assignment {
+//                 Some(value) => {
+//                     if value {
+//                         return Some(AssignmentResult::Sat());
+//                     }
+//                 }
+//                 None => {
+//                     if last_available.is_some() {
+//                         // There are two available variables that could be assigned so no propagate
+//                         return None;
+//                     } else {
+//                         last_available = Some(*var)
+//                     }
+//                 }
+//             }
+//         }
 
-    fn len(&self) -> usize {
-        return self.assignments.len();
-    }
-}
+//         match last_available {
+//             Some(var) => Some(AssignmentResult::Propagate(var)),
+//             None => Some(AssignmentResult::Conflict()),
+//         }
+//     }
+// }
 
-impl Index<usize> for Assignment {
-    type Output = Option<bool>;
+// impl Assignment {
+//     fn from_movelist(list: &Vec<Vec<SolverMove>>, vars: usize) -> Assignment {
+//         let mut initial_assignments: Vec<Option<bool>> = vec![None; vars];
+//         for level in list {
+//             for assignment in level {
+//                 let variable: i32 = match assignment {
+//                     SolverMove::Propagate {
+//                         variable,
+//                         clause: _,
+//                     } => *variable,
+//                     SolverMove::Decide(variable) => *variable,
+//                     SolverMove::Sat() => {
+//                         panic!("Attempted to generate assignment from completed movelist")
+//                     }
+//                     SolverMove::Conflict(_) => {
+//                         panic!("Attempted to generate assignment from movelist with conflict")
+//                     }
+//                 };
+//                 let index: usize = variable.abs() as usize;
+//                 initial_assignments[index - 1] = Some(variable > 0); //Variable '1' maps to assignments[0]
+//             }
+//         }
 
-    fn index(&self, index: usize) -> &Self::Output {
-        return &self.assignments[index];
-    }
-}
+//         return Assignment {
+//             assignments: initial_assignments,
+//         };
+//     }
+
+//     fn len(&self) -> usize {
+//         return self.assignments.len();
+//     }
+// }
+
+// impl ToString for Assignment {
+//     fn to_string(&self) -> String {
+//         let mut buf = "".to_owned();
+//         for i in 1..=self.assignments.len() {
+//             match self[i] {
+//                 Some(val) => if val {
+//                     buf = buf + &i.to_string() + " ";
+//                 } else {
+//                     buf = buf + "-" + &i.to_string() + " ";
+//                 },
+//                 None => continue,
+//             }
+//         }
+
+//         return buf;
+//     }
+// }
+
+// impl Index<usize> for Assignment {
+//     type Output = Option<bool>;
+
+//     fn index(&self, index: usize) -> &Self::Output {
+//         return &self.assignments[index - 1];
+//     }
+// }
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -141,21 +178,28 @@ fn main() {
         return;
     }
 
-    let state = initial_config.unwrap();
+    let mut state = initial_config.unwrap();
     println!("{}", state.to_string());
 
     loop {
         let next_move = move_from_state(&state);
         match next_move {
-            SolverMove::Propagate { variable, clause } => todo!(),
-            SolverMove::Decide(_) => todo!(),
-            SolverMove::Sat() => todo!(),
+            SolverMove::Propagate { variable, clause } => state.add_move(SolverMove::Propagate {
+                variable: variable,
+                clause: clause,
+            }),
+            SolverMove::Decide(var) => {
+                state.add_decision_lv();
+                state.add_move(SolverMove::Decide(var))
+            }
+            SolverMove::Sat() => {
+                println!("{}", state.to_string());
+                return;
+            }
             SolverMove::Conflict(_) => todo!(),
         }
     }
     // dbg!(args);
-
-
 }
 
 fn parse_input(path: &str) -> Result<SolverState, Box<dyn Error>> {
@@ -165,8 +209,6 @@ fn parse_input(path: &str) -> Result<SolverState, Box<dyn Error>> {
 
     let mut initial_state = SolverState::new();
     let header_initialized = false;
-    let mut clauses: usize = 0;
-    let mut variables: usize = 0;
     for line in reader.lines() {
         let line = line?;
         if line.chars().nth(0).unwrap() == 'c' {
@@ -198,13 +240,13 @@ fn parse_input(path: &str) -> Result<SolverState, Box<dyn Error>> {
 
             let parsed_variables = splits[2].parse::<usize>();
             match parsed_variables {
-                Ok(val) => variables = val,
+                Ok(val) => initial_state.set_vars(val),
                 Err(_) => return Err(format!("Variable count must be a number").into()),
             }
 
             let parsed_clauses = splits[3].parse::<usize>();
             match parsed_clauses {
-                Ok(val) => clauses = val,
+                Ok(val) => initial_state.set_clauses(val),
                 Err(_) => return Err(format!("Clause count must be a number").into()),
             }
             continue;
@@ -226,36 +268,39 @@ fn parse_input(path: &str) -> Result<SolverState, Box<dyn Error>> {
         // dbg!(clause);
     }
 
-    println!("{} {}", variables, clauses);
     Ok(initial_state)
 }
 
-fn move_from_state(state: &SolverState) -> SolverMove{
-    let len = state.clauselist.len();
-    let assignment = Assignment::from_movelist(&state.movelist, len);
+fn move_from_state(state: &SolverState) -> SolverMove {
+    let assignment = Assignment::from_movelist(&state.get_movelist(), state.vars());
     let mut sat_clauses = 0;
     // Loop through clauses and check for possible propagates or conflicts
-    for clause_index in 0..state.clauselist.len()  {
-        let clause = &state.clauselist[clause_index];
+    for clause_index in 0..state.clauselist().len() {
+        let clause = &state.clauselist()[clause_index];
         let clause_result = clause.check_assignment(&assignment);
-        
+
         match clause_result {
             Some(status) => match status {
-                AssignmentResult::Propagate(var) => return SolverMove::Propagate { variable: var, clause: clause_index },
+                AssignmentResult::Propagate(var) => {
+                    return SolverMove::Propagate {
+                        variable: var,
+                        clause: clause_index,
+                    }
+                }
                 AssignmentResult::Conflict() => return SolverMove::Conflict(clause_index),
-                AssignmentResult::Sat() => sat_clauses+=1,
+                AssignmentResult::Sat() => sat_clauses += 1,
             },
             None => continue,
         }
     }
 
-    if sat_clauses == len{
+    if sat_clauses == state.clauses() {
         return SolverMove::Sat();
     }
 
     // If no move found decide
-    for var in 1..assignment.len(){
-        if assignment[var].is_none(){
+    for var in 1..assignment.len() {
+        if assignment[var].is_none() {
             return SolverMove::Decide(var as i32);
         }
     }
