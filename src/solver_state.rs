@@ -4,6 +4,7 @@ use crate::{clause::Clause, assignment::Assignment};
 pub enum SolverMove {
     Propagate { variable: i32, clause: usize },
     Decide(i32),
+    DecideFromConflict(i32),
     Sat(),
     Conflict(usize),
 }
@@ -58,6 +59,22 @@ impl SolverState {
             }
         }
         return moves;
+    }
+
+    pub fn resolve_conflict(&mut self) -> bool{
+        if self.movelist.len() == 0 {
+            return false;
+        }
+        let last_decision = &self.movelist.last().unwrap()[0];
+        let var = match last_decision {
+            SolverMove::Decide(val) => *val,
+            _other => return false
+        };
+
+        self.movelist.remove(self.movelist.len()-1);
+        self.add_move(SolverMove::DecideFromConflict(-1 * var));
+
+        return true;
     }
 
     pub fn set_clauses(&mut self, clauses: usize){

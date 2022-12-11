@@ -43,7 +43,13 @@ fn main() {
                 println!("{}", state.to_string());
                 return;
             }
-            SolverMove::Conflict(_) => todo!(),
+            SolverMove::Conflict(_) => if state.resolve_conflict() {
+                continue
+            } else {
+                println!("Unsat");
+                return;
+            },
+            SolverMove::DecideFromConflict(_) => panic!("Next move cannot by DecideFromConflict"),
         }
     }
     // dbg!(args);
