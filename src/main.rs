@@ -42,14 +42,14 @@ fn main() {
                 state.add_move(SolverMove::Decide(var))
             }
             SolverMove::Sat() => {
-                println!("Moves: {}\n {}", moves, state.to_string());
+                println!("Moves: {}\n{}", moves, state.to_string());
                 return;
             }
-            SolverMove::Conflict(_) => {
-                if state.resolve_conflict() {
+            SolverMove::Conflict(index) => {
+                if state.resolve_conflict(index) {
                     continue;
                 } else {
-                    println!("Moves: {}\n Unsat", moves);
+                    println!("Moves: {}\nUnsat", moves);
                     return;
                 }
             }
@@ -94,7 +94,12 @@ fn parse_input(path: &str) -> Result<SolverState, Box<dyn Error>> {
 
             let parsed_variables = splits[2].parse::<usize>();
             match parsed_variables {
-                Ok(val) => initial_state.set_vars(val),
+                Ok(val) => {
+                    initial_state.set_vars(val);
+                    let activity_vec = vec![0.0; val * 2];
+                    // activity_vec[0] = 0.01;
+                    initial_state.set_activity(activity_vec);
+                }
                 Err(_) => return Err(format!("Variable count must be a number").into()),
             }
 
@@ -165,7 +170,8 @@ fn move_from_state(state: &SolverState) -> SolverMove {
     // }
 
     // let var = decide_first_unsat(&assignment, &clause_status, state.clauselist());
-    let var = decide_bohm(&assignment, &clause_status, state.clauselist());
+    // let var = decide_bohm(&assignment, &clause_status, state.clauselist());
+    let var = decide_activity(&assignment, state, &clause_status, state.clauselist());
     return SolverMove::Decide(var);
 }
 
@@ -251,7 +257,7 @@ fn decide_bohm(assignment: &Assignment, clause_status: &Vec<bool>, clauses: &Vec
         }
     }
 
-    let empty:HashMap<usize, usize> = HashMap::new();
+    let empty: HashMap<usize, usize> = HashMap::new();
     // Find best variable to assign
     let mut best_var = last_var;
     for index in 1..=assignment.len() {
@@ -302,7 +308,7 @@ fn decide_bohm(assignment: &Assignment, clause_status: &Vec<bool>, clauses: &Vec
 
     let best_map = var_to_count_map_map.get(&best_var).unwrap_or(&empty);
     let best_map_inv = var_to_count_map_map.get(&(best_var * -1)).unwrap_or(&empty);
-    for i in 1..=max_clause_len{
+    for i in 1..=max_clause_len {
         normal_sum += match best_map.get(&i) {
             Some(count) => *count,
             None => 0,
@@ -311,12 +317,47 @@ fn decide_bohm(assignment: &Assignment, clause_status: &Vec<bool>, clauses: &Vec
             Some(count) => *count,
             None => 0,
         };
-
     }
     if normal_sum > inv_sum {
         return best_var;
     } else {
         return -1 * best_var;
     }
+}
 
+fn decide_activity(assignment: &Assignment, state: &SolverState, clause_status: &Vec<bool>, clauses: &Vec<Clause>) -> i32 {
+    let mut best_activity = 0.0;
+    let mut best_var: i32 = 0;
+    // dbg!(state.activity());
+    for i in 0..state.vars() {
+        if assignment[i + 1].is_some() {
+            continue;
+        }
+        let var_activty = state.activity()[i];
+        if var_activty > best_activity {
+            best_activity = var_activty;
+            best_var = <usize as TryInto<i32>>::try_into(i).unwrap() + 1;
+        }
+    }
+
+    for i in 0..state.vars() {
+        let index = i + state.vars();
+        if assignment[i + 1].is_some() {
+            continue;
+        }
+        let var_activty = state.activity()[index];
+        if var_activty > best_activity {
+            best_activity = var_activty;
+            best_var = (<usize as TryInto<i32>>::try_into(i).unwrap() + 1) * -1;
+        }
+    }
+    
+    if best_var == 0 {
+        let output =  decide_bohm(assignment, clause_status, clauses);
+        // dbg!(output);
+        return output;
+        
+    }
+    // dbg!(best_var);
+    return best_var;
 }
