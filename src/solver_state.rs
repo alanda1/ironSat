@@ -13,7 +13,7 @@ pub struct SolverState {
     clauselist: Vec<Clause>,
     movelist: Vec<Vec<SolverMove>>,
     vars: usize,
-    clauses: usize
+    clauses: usize,
 }
 
 impl SolverState {
@@ -92,13 +92,13 @@ impl SolverState {
 impl ToString for SolverState {
     fn to_string(&self) -> String {
         let mut buf = "".to_owned();
-        buf = buf + "Clauses:\n";
-        for clause in &self.clauselist {
-            for var in &clause.vars {
-                buf = buf + &var.to_string() + " ";
-            }
-            buf = buf + "\n";
-        }
+        // buf = buf + "Clauses:\n";
+        // for clause in &self.clauselist {
+        //     for var in &clause.vars {
+        //         buf = buf + &var.to_string() + " ";
+        //     }
+        //     buf = buf + "\n";
+        // }
         buf = buf + "\nAssignment:\n";
 
         let assignment = Assignment::from_movelist(&self.get_movelist(), self.vars());

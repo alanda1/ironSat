@@ -1,3 +1,5 @@
+use std::cmp::{max, min};
+use std::collections::HashMap;
 use std::env;
 use std::error::Error;
 use std::fs::File;
@@ -27,7 +29,7 @@ fn main() {
 
     let mut state = initial_config.unwrap();
     // println!("{}", state.to_string());
-
+    let mut moves: usize = 0;
     loop {
         let next_move = move_from_state(&state);
         match next_move {
@@ -40,17 +42,20 @@ fn main() {
                 state.add_move(SolverMove::Decide(var))
             }
             SolverMove::Sat() => {
-                println!("{}", state.to_string());
+                println!("Moves: {}\n {}", moves, state.to_string());
                 return;
             }
-            SolverMove::Conflict(_) => if state.resolve_conflict() {
-                continue
-            } else {
-                println!("Unsat");
-                return;
-            },
+            SolverMove::Conflict(_) => {
+                if state.resolve_conflict() {
+                    continue;
+                } else {
+                    println!("Moves: {}\n Unsat", moves);
+                    return;
+                }
+            }
             SolverMove::DecideFromConflict(_) => panic!("Next move cannot by DecideFromConflict"),
         }
+        moves += 1;
     }
     // dbg!(args);
 }
@@ -123,7 +128,9 @@ fn parse_input(path: &str) -> Result<SolverState, Box<dyn Error>> {
 fn move_from_state(state: &SolverState) -> SolverMove {
     let assignment = Assignment::from_movelist(&state.get_movelist(), state.vars());
     let mut sat_clauses = 0;
-    // Loop through clauses and check for possible propagates or conflicts
+
+    let mut clause_status = vec![false; state.clauses()]; // True indicates the clause is sat
+                                                          // Loop through clauses and check for possible propagates or conflicts
     for clause_index in 0..state.clauselist().len() {
         let clause = &state.clauselist()[clause_index];
         let clause_result = clause.check_assignment(&assignment);
@@ -137,7 +144,10 @@ fn move_from_state(state: &SolverState) -> SolverMove {
                     }
                 }
                 AssignmentResult::Conflict() => return SolverMove::Conflict(clause_index),
-                AssignmentResult::Sat() => sat_clauses += 1,
+                AssignmentResult::Sat() => {
+                    sat_clauses += 1;
+                    clause_status[clause_index] = true
+                }
             },
             None => continue,
         }
@@ -148,10 +158,165 @@ fn move_from_state(state: &SolverState) -> SolverMove {
     }
 
     // If no move found decide
-    for var in 1..assignment.len() {
-        if assignment[var].is_none() {
-            return SolverMove::Decide(var as i32);
+    // for var in 1..assignment.len() {
+    //     if assignment[var].is_none() {
+    //         return SolverMove::Decide(var as i32);
+    //     }
+    // }
+
+    // let var = decide_first_unsat(&assignment, &clause_status, state.clauselist());
+    let var = decide_bohm(&assignment, &clause_status, state.clauselist());
+    return SolverMove::Decide(var);
+}
+
+#[allow(dead_code)]
+fn decide_first_unsat(
+    assignment: &Assignment,
+    clause_status: &Vec<bool>,
+    clauses: &Vec<Clause>,
+) -> i32 {
+    for index in 1..clause_status.len() {
+        if clause_status[index] {
+            // Skip over sat clauses
+            continue;
+        }
+        let decide_clause = &clauses[index];
+        for var in &decide_clause.vars {
+            let index: usize = var.abs().try_into().unwrap();
+            if assignment[index].is_none() {
+                return *var;
+            }
         }
     }
-    panic!("No possible decisions found")
+    panic!("No unsat clauses to decide on");
+}
+
+#[allow(dead_code)]
+fn decide_bohm(assignment: &Assignment, clause_status: &Vec<bool>, clauses: &Vec<Clause>) -> i32 {
+    // println!("Begin bohm with assignment {}", assignment.to_string());
+    let alpha = 1;
+    let beta = 2;
+    // let mut length_to_clause_map: HashMap<usize, Vec<Clause>> = HashMap::new();
+    // for index in 0..clauses.len() {
+    //     if clause_status[index] {
+    //         continue;
+    //     }
+    //     let clause = &clauses[index];
+    //     let mut adjusted_list: Vec<i32> = Vec::new();
+    //     for var in &clause.vars {
+    //         let val = *var;
+    //         let assignment_index: usize = val.abs().try_into().unwrap();
+    //         if assignment[assignment_index].is_none(){
+    //             adjusted_list.push(val);
+    //         }
+    //     }
+    //     let adjusted_clause = Clause::from_vec(adjusted_list);
+    //     let length = adjusted_clause.vars.len();
+    //     if !length_to_clause_map.contains_key(&length){
+    //         length_to_clause_map.insert(length, Vec::new());
+    //     }
+    //     length_to_clause_map.get_mut(&length).unwrap().push(adjusted_clause);
+    // }
+
+    let mut var_to_count_map_map: HashMap<i32, HashMap<usize, usize>> = HashMap::new();
+    // Generate "Vectors" of counts in clauses of size n
+    let mut max_clause_len = 0;
+    let mut last_var = 0;
+    for index in 0..clauses.len() {
+        if clause_status[index] {
+            continue;
+        }
+        let clause = &clauses[index];
+        let mut adjusted_list: Vec<i32> = Vec::new();
+        for var in &clause.vars {
+            let val = *var;
+            let assignment_index: usize = val.abs().try_into().unwrap();
+            if assignment[assignment_index].is_none() {
+                adjusted_list.push(val);
+                last_var = val;
+            }
+        }
+        let length = adjusted_list.len();
+        max_clause_len = max(max_clause_len, length);
+        for var in adjusted_list {
+            if !var_to_count_map_map.contains_key(&var) {
+                var_to_count_map_map.insert(var, HashMap::new());
+            }
+
+            let len_to_count_map = var_to_count_map_map.get_mut(&var).unwrap();
+            if !len_to_count_map.contains_key(&length) {
+                len_to_count_map.insert(length, 0);
+            }
+            len_to_count_map.insert(length, len_to_count_map.get(&length).unwrap() + 1);
+        }
+    }
+
+    let empty:HashMap<usize, usize> = HashMap::new();
+    // Find best variable to assign
+    let mut best_var = last_var;
+    for index in 1..=assignment.len() {
+        if assignment[index].is_some() {
+            continue;
+        }
+        let best_map = var_to_count_map_map.get(&best_var).unwrap_or(&empty);
+        let best_map_inv = var_to_count_map_map.get(&(best_var * -1)).unwrap_or(&empty);
+        let cur: i32 = index.try_into().unwrap();
+        let cur_inv: i32 = cur * -1;
+        // println!("{}",cur);
+        let cur_map = var_to_count_map_map.get(&cur).unwrap_or(&empty);
+        let cur_map_inv = var_to_count_map_map.get(&cur_inv).unwrap_or(&empty);
+        for len in 1..=max_clause_len {
+            let h_cur = match cur_map.get(&len) {
+                Some(count) => *count,
+                None => 0,
+            };
+            let h_cur_inv = match cur_map_inv.get(&len) {
+                Some(count) => *count,
+                None => 0,
+            };
+            let h_best = match best_map.get(&len) {
+                Some(count) => *count,
+                None => 0,
+            };
+            let h_best_inv = match best_map_inv.get(&len) {
+                Some(count) => *count,
+                None => 0,
+            };
+
+            let score_cur = alpha * max(h_cur, h_cur_inv) + beta * min(h_cur, h_cur_inv);
+            let score_best = alpha * max(h_best, h_best_inv) + beta * min(h_best, h_best_inv);
+            if score_best == score_cur {
+                continue;
+            } else if score_cur > score_best {
+                best_var = cur;
+                break;
+            } else {
+                break;
+            }
+        }
+    }
+
+    // Check if best_var or its inverse is best
+    let mut normal_sum = 0;
+    let mut inv_sum = 0;
+
+    let best_map = var_to_count_map_map.get(&best_var).unwrap_or(&empty);
+    let best_map_inv = var_to_count_map_map.get(&(best_var * -1)).unwrap_or(&empty);
+    for i in 1..=max_clause_len{
+        normal_sum += match best_map.get(&i) {
+            Some(count) => *count,
+            None => 0,
+        };
+        inv_sum += match best_map_inv.get(&i) {
+            Some(count) => *count,
+            None => 0,
+        };
+
+    }
+    if normal_sum > inv_sum {
+        return best_var;
+    } else {
+        return -1 * best_var;
+    }
+
 }
