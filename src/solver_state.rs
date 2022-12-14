@@ -1,6 +1,5 @@
-use std::collections::{BinaryHeap, HashMap, HashSet};
-
 use crate::{assignment::Assignment, clause::Clause};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 
 #[derive(Clone, Debug)]
 pub enum SolverMove {
@@ -52,6 +51,17 @@ impl SolverState {
         self.movelist.push(Vec::new());
     }
 
+    fn bump_activity(&mut self, var: i32) {
+        let var_index: usize = (TryInto::<usize>::try_into((var).abs()).unwrap()) - 1;
+        let index: usize = if var > 0 {
+            var_index
+        } else {
+            var_index + self.vars
+        };
+        let old = self.activitylist[index];
+        self.activitylist[index] = old + 1.0;
+    }
+
     pub fn clauselist(&self) -> &Vec<Clause> {
         return &self.clauselist;
     }
@@ -82,8 +92,8 @@ impl SolverState {
         return all_set;
     }
 
-    fn forget_clause(&mut self, indexes: HashSet<usize>) {
-        for index in &indexes {
+    fn forget_clause(&mut self, indexes: &HashSet<usize>) {
+        for index in indexes {
             assert!(*index > (self.original_clause_count - 1));
         }
 
@@ -109,7 +119,7 @@ impl SolverState {
         let mut index_remapping: HashMap<usize, usize> = HashMap::new();
         for i in 0..self.clauses() {
             let mut num_less = 0;
-            for removed in &indexes {
+            for removed in indexes {
                 if *removed < i {
                     num_less += 1;
                 }
@@ -139,15 +149,13 @@ impl SolverState {
         }
 
         let mut reorder = BinaryHeap::new();
-        for index in indexes{
+        for index in indexes {
             reorder.push(index);
         }
-        while !reorder.is_empty(){
+        while !reorder.is_empty() {
             let index = reorder.pop().unwrap();
-            self.clauselist.remove(index);
+            self.clauselist.remove(*index);
         }
-
-
     }
     pub fn get_movelist(&self) -> Vec<SolverMove> {
         let mut moves: Vec<SolverMove> = Vec::new();
@@ -159,8 +167,15 @@ impl SolverState {
         return moves;
     }
 
-    pub fn resolve_conflict_dpll(&mut self, _: usize) -> bool {
+    #[allow(dead_code)]
+    pub fn resolve_conflict_dpll(&mut self, clause_index: usize) -> bool {
         // DPLL Conflict Resolution:
+
+        // Increase activity for all variables in conflict clause
+        let conflict_clause = self.clauselist[clause_index].vars.clone();
+        for var in &conflict_clause {
+            self.bump_activity(*var);
+        }
 
         let last_decision = &self.movelist.last().unwrap()[0];
         let var = match last_decision {
@@ -170,6 +185,11 @@ impl SolverState {
 
         self.movelist.remove(self.movelist.len() - 1);
         self.add_move(SolverMove::DecideFromConflict(-1 * var, 0));
+
+        for i in 0..self.vars() * 2 {
+            self.activitylist[i] *= 0.9;
+        }
+
         return true;
     }
     pub fn resolve_conflict_cdcl(&mut self, clause_index: usize) -> bool {
@@ -180,19 +200,6 @@ impl SolverState {
             return false;
         }
 
-        // Increase activity for all variables in conflict clause
-        let conflict_clause = &self.clauselist[clause_index];
-        for var in &conflict_clause.vars {
-            let var_index: usize = (TryInto::<usize>::try_into((*var).abs()).unwrap()) - 1;
-            let index: usize = if *var > 0 {
-                var_index
-            } else {
-                var_index + self.vars
-            };
-            // print!("{} ", var);
-            let old = self.activitylist[index];
-            self.activitylist[index] = old + 1.0;
-        }
         // println!("");
 
         // Build structure for variable -> decision level
@@ -242,6 +249,7 @@ impl SolverState {
 
         // Create conflict clause
         let mut conflict_list: HashSet<i32> = HashSet::new();
+        let conflict_clause = &self.clauselist[clause_index];
         for var in &conflict_clause.vars {
             conflict_list.insert(*var);
         }
@@ -285,9 +293,12 @@ impl SolverState {
         // dbg!(&conflict_list);
         let mut found_levels: BinaryHeap<usize> = BinaryHeap::new();
         // dbg!(current_level);
+
+        // Calculate levels, create clause, and update activity for learned clause
         for var in conflict_list {
             let var_inv = var * -1;
             new_clause_list.push(var);
+            self.bump_activity(var);
             // dbg!(var);
             let level = *variable_level_map.get(&var_inv).unwrap();
             assert!(level != current_level || var_inv == last_decided_var);
@@ -308,9 +319,26 @@ impl SolverState {
         ));
 
         // Find clauses to delete
-        let deletable_clauses = self.find_deletable_clauses();
-        // dbg!(&deletable_clauses);
-        self.forget_clause(deletable_clauses);
+        let check_forget_cutoff = 0.05;
+        let check_forget_rand = rand::random::<f32>();
+        let forget = check_forget_cutoff > check_forget_rand;
+        if forget {
+            let deletable_clauses = self.find_deletable_clauses();
+            let mut filtered_deleteable_clauses = HashSet::new();
+            let cutoff: f64 =
+                0.0001 * (deletable_clauses.len() as f64) / (self.original_clause_count as f64);
+            // dbg!(cutoff);
+            for index in deletable_clauses {
+                let x = rand::random::<f64>();
+                // dbg!(x);
+                if x < cutoff {
+                    filtered_deleteable_clauses.insert(index);
+                }
+            }
+            // dbg!(&filtered_deleteable_clauses);
+            self.forget_clause(&filtered_deleteable_clauses);
+        }
+
         // Decay all activity values
         for i in 0..self.vars() * 2 {
             self.activitylist[i] *= 0.9;

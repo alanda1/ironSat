@@ -170,8 +170,8 @@ fn move_from_state(state: &SolverState) -> SolverMove {
     }
 
     // let var = decide_first_unsat(&assignment, &clause_status, state.clauselist());
-    let var = decide_bohm(&assignment, &clause_status, state.clauselist());
-    // let var = decide_activity(&assignment, state, &clause_status, state.clauselist());
+    // let var = decide_bohm(&assignment, &clause_status, state.clauselist());
+    let var = decide_activity(&assignment, state, &clause_status, state.clauselist());
     return SolverMove::Decide(var);
 }
 
@@ -325,6 +325,7 @@ fn decide_bohm(assignment: &Assignment, clause_status: &Vec<bool>, clauses: &Vec
     }
 }
 
+#[allow(dead_code)]
 fn decide_activity(assignment: &Assignment, state: &SolverState, clause_status: &Vec<bool>, clauses: &Vec<Clause>) -> i32 {
     let mut best_activity = 0.0;
     let mut best_var: i32 = 0;
