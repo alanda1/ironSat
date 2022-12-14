@@ -8,6 +8,7 @@ pub enum AssignmentResult {
     Sat(),
 }
 
+#[derive(Debug)]
 pub struct Clause {
     pub vars: Vec<i32>,
 }

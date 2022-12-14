@@ -53,7 +53,7 @@ fn main() {
                     return;
                 }
             }
-            SolverMove::DecideFromConflict(_) => panic!("Next move cannot by DecideFromConflict"),
+            SolverMove::DecideFromConflict(_, _) => panic!("Next move cannot by DecideFromConflict"),
         }
         moves += 1;
     }
@@ -103,11 +103,11 @@ fn parse_input(path: &str) -> Result<SolverState, Box<dyn Error>> {
                 Err(_) => return Err(format!("Variable count must be a number").into()),
             }
 
-            let parsed_clauses = splits[3].parse::<usize>();
-            match parsed_clauses {
-                Ok(val) => initial_state.set_clauses(val),
-                Err(_) => return Err(format!("Clause count must be a number").into()),
-            }
+            // let parsed_clauses = splits[3].parse::<usize>();
+            // match parsed_clauses {
+            //     Ok(val) => initial_state.set_clauses(val),
+            //     Err(_) => return Err(format!("Clause count must be a number").into()),
+            // }
             continue;
         }
         let mut clause: Vec<i32> = Vec::new();
@@ -163,11 +163,11 @@ fn move_from_state(state: &SolverState) -> SolverMove {
     }
 
     // If no move found decide
-    // for var in 1..assignment.len() {
-    //     if assignment[var].is_none() {
-    //         return SolverMove::Decide(var as i32);
-    //     }
-    // }
+    for var in 1..=assignment.len() {
+        if assignment[var].is_none() {
+            return SolverMove::Decide(var as i32);
+        }
+    }
 
     // let var = decide_first_unsat(&assignment, &clause_status, state.clauselist());
     // let var = decide_bohm(&assignment, &clause_status, state.clauselist());

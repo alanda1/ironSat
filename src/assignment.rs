@@ -16,7 +16,7 @@ impl Assignment {
                     clause: _,
                 } => *variable,
                 SolverMove::Decide(variable) => *variable,
-                SolverMove::DecideFromConflict(variable) => *variable,
+                SolverMove::DecideFromConflict(variable, _) => *variable,
                 SolverMove::Sat() => {
                     panic!("Attempted to generate assignment from completed movelist")
                 }
