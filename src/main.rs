@@ -42,11 +42,11 @@ fn main() {
                 state.add_move(SolverMove::Decide(var))
             }
             SolverMove::Sat() => {
-                println!("Moves: {}\n{}", moves, state.to_string());
+                println!("Moves: {}\nClauses added:{}\n{}", moves, state.clauselist().len() - state.original_clause_count, state.to_string());
                 return;
             }
             SolverMove::Conflict(index) => {
-                if state.resolve_conflict(index) {
+                if state.resolve_conflict_cdcl(index) {
                     continue;
                 } else {
                     println!("Moves: {}\nUnsat", moves);
@@ -103,11 +103,11 @@ fn parse_input(path: &str) -> Result<SolverState, Box<dyn Error>> {
                 Err(_) => return Err(format!("Variable count must be a number").into()),
             }
 
-            // let parsed_clauses = splits[3].parse::<usize>();
-            // match parsed_clauses {
-            //     Ok(val) => initial_state.set_clauses(val),
-            //     Err(_) => return Err(format!("Clause count must be a number").into()),
-            // }
+            let parsed_clauses = splits[3].parse::<usize>();
+            match parsed_clauses {
+                Ok(val) => initial_state.original_clause_count = val,
+                Err(_) => return Err(format!("Clause count must be a number").into()),
+            }
             continue;
         }
         let mut clause: Vec<i32> = Vec::new();
@@ -170,8 +170,8 @@ fn move_from_state(state: &SolverState) -> SolverMove {
     }
 
     // let var = decide_first_unsat(&assignment, &clause_status, state.clauselist());
-    // let var = decide_bohm(&assignment, &clause_status, state.clauselist());
-    let var = decide_activity(&assignment, state, &clause_status, state.clauselist());
+    let var = decide_bohm(&assignment, &clause_status, state.clauselist());
+    // let var = decide_activity(&assignment, state, &clause_status, state.clauselist());
     return SolverMove::Decide(var);
 }
 

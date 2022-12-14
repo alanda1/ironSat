@@ -1,6 +1,6 @@
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
-use crate::{assignment::Assignment, clause::{Clause, self}};
+use crate::{assignment::Assignment, clause::Clause};
 
 #[derive(Clone, Debug)]
 pub enum SolverMove {
@@ -16,6 +16,7 @@ pub struct SolverState {
     movelist: Vec<Vec<SolverMove>>,
     activitylist: Vec<f32>,
     vars: usize,
+    pub original_clause_count: usize,
 }
 
 impl SolverState {
@@ -25,6 +26,7 @@ impl SolverState {
             movelist: Vec::new(),
             vars: 0,
             activitylist: Vec::new(),
+            original_clause_count: 0,
         }
     }
 
@@ -57,6 +59,96 @@ impl SolverState {
     pub fn clauses(&self) -> usize {
         return self.clauselist.len();
     }
+
+    fn find_deletable_clauses(&self) -> HashSet<usize> {
+        let mut all_set: HashSet<usize> = HashSet::new();
+        for i in self.original_clause_count..self.clauses() {
+            all_set.insert(i);
+        }
+
+        for level in &self.movelist {
+            for solver_move in level {
+                match solver_move {
+                    SolverMove::Propagate {
+                        variable: _,
+                        clause,
+                    } => all_set.remove(clause),
+                    SolverMove::DecideFromConflict(_, clause) => all_set.remove(clause),
+                    _ => continue,
+                };
+            }
+        }
+
+        return all_set;
+    }
+
+    fn forget_clause(&mut self, indexes: HashSet<usize>) {
+        for index in &indexes {
+            assert!(*index > (self.original_clause_count - 1));
+        }
+
+        #[cfg(debug_assertions)]
+        {
+            for level in &self.movelist {
+                for solver_move in level {
+                    match solver_move {
+                        SolverMove::Propagate {
+                            variable: _,
+                            clause,
+                        } => assert!(!indexes.contains(clause)),
+                        SolverMove::DecideFromConflict(_, clause) => {
+                            assert!(!indexes.contains(clause))
+                        }
+                        _ => continue,
+                    }
+                }
+            }
+        }
+
+        // Calculate new clause index values for existing moves
+        let mut index_remapping: HashMap<usize, usize> = HashMap::new();
+        for i in 0..self.clauses() {
+            let mut num_less = 0;
+            for removed in &indexes {
+                if *removed < i {
+                    num_less += 1;
+                }
+            }
+            let new_val = i - num_less;
+            index_remapping.insert(i, new_val);
+        }
+
+        // Update clause index values for existing moves
+        for level in 0..self.movelist.len() {
+            for i in 0..self.movelist[level].len() {
+                let clause = &self.movelist[level][i];
+                match clause {
+                    SolverMove::Propagate { variable, clause } => {
+                        self.movelist[level][i] = SolverMove::Propagate {
+                            variable: *variable,
+                            clause: index_remapping[clause],
+                        }
+                    }
+                    SolverMove::DecideFromConflict(var, clause) => {
+                        self.movelist[level][i] =
+                            SolverMove::DecideFromConflict(*var, index_remapping[clause])
+                    }
+                    _ => continue,
+                }
+            }
+        }
+
+        let mut reorder = BinaryHeap::new();
+        for index in indexes{
+            reorder.push(index);
+        }
+        while !reorder.is_empty(){
+            let index = reorder.pop().unwrap();
+            self.clauselist.remove(index);
+        }
+
+
+    }
     pub fn get_movelist(&self) -> Vec<SolverMove> {
         let mut moves: Vec<SolverMove> = Vec::new();
         for level in &self.movelist {
@@ -67,7 +159,20 @@ impl SolverState {
         return moves;
     }
 
-    pub fn resolve_conflict(&mut self, clause_index: usize) -> bool {
+    pub fn resolve_conflict_dpll(&mut self, _: usize) -> bool {
+        // DPLL Conflict Resolution:
+
+        let last_decision = &self.movelist.last().unwrap()[0];
+        let var = match last_decision {
+            SolverMove::Decide(val) => *val,
+            _other => return false,
+        };
+
+        self.movelist.remove(self.movelist.len() - 1);
+        self.add_move(SolverMove::DecideFromConflict(-1 * var, 0));
+        return true;
+    }
+    pub fn resolve_conflict_cdcl(&mut self, clause_index: usize) -> bool {
         // println!("Begin conflict resolution");
         // dbg!(&self.movelist);
         // dbg!(self.clauselist());
@@ -118,7 +223,9 @@ impl SolverState {
                         variable_clause_map.insert(*variable, *clause);
                         // println!("Adding {} to variable clause map", *variable)
                     }
-                    SolverMove::DecideFromConflict(variable, clause) => {variable_clause_map.insert(*variable, *clause);},
+                    SolverMove::DecideFromConflict(variable, clause) => {
+                        variable_clause_map.insert(*variable, *clause);
+                    }
                     SolverMove::Sat() => panic!("Sat found when resolving conflict"),
                     SolverMove::Conflict(_) => panic!("Conflict in movelist"),
                     _other => continue,
@@ -139,7 +246,6 @@ impl SolverState {
             conflict_list.insert(*var);
         }
         conflict_list.remove(&last_decided_var);
-        
 
         let current_level = self.movelist.len() - 1;
         //Begin conflict resolution
@@ -157,8 +263,8 @@ impl SolverState {
                     // Set Resolving clause
                     let explaining_clause =
                         &self.clauselist[*variable_clause_map.get(&conflict_var_inv).unwrap()]; //Maybe this should return if unwrap fails?
-                    // dbg!(&explaining_clause.vars);
-                        clause = Some(explaining_clause);
+                                                                                                // dbg!(&explaining_clause.vars);
+                    clause = Some(explaining_clause);
                     var = Some(*conflict_var);
                     break;
                 }
@@ -196,20 +302,15 @@ impl SolverState {
         };
         self.movelist.truncate(backjump_level);
         // dbg!(self.clauses());
-        self.add_move(SolverMove::DecideFromConflict(-1 * last_decided_var, self.clauses()-1));
+        self.add_move(SolverMove::DecideFromConflict(
+            -1 * last_decided_var,
+            self.clauses() - 1,
+        ));
 
-        // dbg!(&self.movelist);
-        // // DPLL Conflict Resolution:
-
-        // let last_decision = &self.movelist.last().unwrap()[0];
-        // let var = match last_decision {
-        //     SolverMove::Decide(val) => *val,
-        //     _other => return false,
-        // };
-
-        // self.movelist.remove(self.movelist.len() - 1);
-        // self.add_move(SolverMove::DecideFromConflict(-1 * var));
-
+        // Find clauses to delete
+        let deletable_clauses = self.find_deletable_clauses();
+        // dbg!(&deletable_clauses);
+        self.forget_clause(deletable_clauses);
         // Decay all activity values
         for i in 0..self.vars() * 2 {
             self.activitylist[i] *= 0.9;
@@ -250,7 +351,11 @@ impl ToString for SolverState {
 
 #[cfg(test)]
 mod tests {
-    use crate::{solver_state::SolverMove, assignment::Assignment, clause::{AssignmentResult, self, Clause}};
+    use crate::{
+        assignment::Assignment,
+        clause::{self, AssignmentResult, Clause},
+        solver_state::SolverMove,
+    };
 
     use super::SolverState;
 
@@ -261,15 +366,20 @@ mod tests {
     }
 
     #[test]
-    fn cdcl_conflict(){
+    fn cdcl_conflict() {
         let clause1 = Clause::from_vec(Vec::from([1]));
-        let clause2 = Clause::from_vec(Vec::from([-1,2]));
-        let clause3 = Clause::from_vec(Vec::from([-3,4]));
-        let clause4 = Clause::from_vec(Vec::from([-5,-6]));
-        let clause5 = Clause::from_vec(Vec::from([-1,-5,7]));
-        let clause6 = Clause::from_vec(Vec::from([-2,-5,6,-7]));
-        let clauses = Vec::from([clause1, clause2,clause3,clause4,clause5,clause6,]);
-        let state = SolverState{ clauselist: clauses, movelist: Vec::new(), activitylist: vec![0.0;7], vars: 7};
+        let clause2 = Clause::from_vec(Vec::from([-1, 2]));
+        let clause3 = Clause::from_vec(Vec::from([-3, 4]));
+        let clause4 = Clause::from_vec(Vec::from([-5, -6]));
+        let clause5 = Clause::from_vec(Vec::from([-1, -5, 7]));
+        let clause6 = Clause::from_vec(Vec::from([-2, -5, 6, -7]));
+        let clauses = Vec::from([clause1, clause2, clause3, clause4, clause5, clause6]);
+        let state = SolverState {
+            clauselist: clauses,
+            movelist: Vec::new(),
+            activitylist: vec![0.0; 7],
+            vars: 7,
+            original_clause_count: 6,
+        };
     }
-    
 }
