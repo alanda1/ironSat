@@ -29,10 +29,6 @@ impl SolverState {
         }
     }
 
-    pub fn activity(&self) -> &Vec<f32> {
-        return &self.activitylist;
-    }
-
     pub fn add_clause(&mut self, clause: Clause) {
         self.clauselist.push(clause);
     }
@@ -60,6 +56,16 @@ impl SolverState {
         };
         let old = self.activitylist[index];
         self.activitylist[index] = old + 1.0;
+    }
+
+    pub fn get_activity(&self, var: i32) -> f32 {
+        let var_index: usize = (TryInto::<usize>::try_into((var).abs()).unwrap()) - 1;
+        let index: usize = if var > 0 {
+            var_index
+        } else {
+            var_index + self.vars
+        };
+        return self.activitylist[index];
     }
 
     pub fn clauselist(&self) -> &Vec<Clause> {
@@ -187,20 +193,18 @@ impl SolverState {
         self.add_move(SolverMove::DecideFromConflict(-1 * var, 0));
 
         for i in 0..self.vars() * 2 {
-            self.activitylist[i] *= 0.9;
+            self.activitylist[i] *= 0.95;
         }
 
         return true;
     }
+
+    #[allow(dead_code)]
     pub fn resolve_conflict_cdcl(&mut self, clause_index: usize) -> bool {
-        // println!("Begin conflict resolution");
-        // dbg!(&self.movelist);
-        // dbg!(self.clauselist());
         if self.movelist.len() == 0 {
+            // Nowhere to backjump to
             return false;
         }
-
-        // println!("");
 
         // Build structure for variable -> decision level
         let mut variable_level_map: HashMap<i32, usize> = HashMap::new();
@@ -216,7 +220,6 @@ impl SolverState {
                     SolverMove::Sat() => panic!("Sat found when resolving conflict"),
                     SolverMove::Conflict(_) => panic!("Conflict in movelist"),
                 };
-                // println!("Adding {} to variable level map", var);
                 variable_level_map.insert(var, level);
             }
         }
@@ -228,7 +231,6 @@ impl SolverState {
                 match solver_move {
                     SolverMove::Propagate { variable, clause } => {
                         variable_clause_map.insert(*variable, *clause);
-                        // println!("Adding {} to variable clause map", *variable)
                     }
                     SolverMove::DecideFromConflict(variable, clause) => {
                         variable_clause_map.insert(*variable, *clause);
@@ -245,7 +247,6 @@ impl SolverState {
             SolverMove::Decide(val) => *val,
             _other => return false,
         };
-        // dbg!(last_decided_var);
 
         // Create conflict clause
         let mut conflict_list: HashSet<i32> = HashSet::new();
@@ -257,62 +258,72 @@ impl SolverState {
 
         let current_level = self.movelist.len() - 1;
         //Begin conflict resolution
+
+        let mut active_vars = HashSet::new();
         loop {
             let mut clause: Option<&Clause> = None;
             let mut var: Option<i32> = None;
-            // dbg!(&conflict_list);
+
             for conflict_var in &conflict_list {
                 let conflict_var_inv = -1 * conflict_var;
+                // Allow the last decided variable to stay
                 if conflict_var_inv == last_decided_var {
                     continue;
                 }
-                // dbg!(*conflict_var);
+
+                // Check if the variable is in the current decision level
                 if *variable_level_map.get(&conflict_var_inv).unwrap() == current_level {
                     // Set Resolving clause
                     let explaining_clause =
                         &self.clauselist[*variable_clause_map.get(&conflict_var_inv).unwrap()]; //Maybe this should return if unwrap fails?
-                                                                                                // dbg!(&explaining_clause.vars);
                     clause = Some(explaining_clause);
                     var = Some(*conflict_var);
                     break;
                 }
             }
+
+            // If no variable other than last decided literal is in the current decision level stop
             if clause.is_none() {
                 break;
             }
 
+            // Resolve conflict and explaining clauses
             for additional_var in &clause.unwrap().vars {
                 conflict_list.insert(*additional_var);
+                active_vars.insert(*additional_var);
             }
             conflict_list.remove(&var.unwrap());
             conflict_list.remove(&(var.unwrap() * -1));
         }
 
+
+
         // Get levels of all variables in conflict clause
         let mut new_clause_list = Vec::new();
-        // dbg!(&conflict_list);
         let mut found_levels: BinaryHeap<usize> = BinaryHeap::new();
-        // dbg!(current_level);
 
         // Calculate levels, create clause, and update activity for learned clause
         for var in conflict_list {
             let var_inv = var * -1;
             new_clause_list.push(var);
             self.bump_activity(var);
-            // dbg!(var);
             let level = *variable_level_map.get(&var_inv).unwrap();
             assert!(level != current_level || var_inv == last_decided_var);
             found_levels.push(level);
         }
+
+        // Learn the conflict clause
         self.add_clause(Clause::from_vec(new_clause_list));
+
         // Get second highest level
         let first = found_levels.pop();
         let backjump_level = match found_levels.pop() {
             Some(val) => val + 1,
             None => first.unwrap(),
         };
+
+        // Backjump
         self.movelist.truncate(backjump_level);
-        // dbg!(self.clauses());
         self.add_move(SolverMove::DecideFromConflict(
             -1 * last_decided_var,
             self.clauses() - 1,
@@ -327,21 +338,18 @@ impl SolverState {
             let mut filtered_deleteable_clauses = HashSet::new();
             let cutoff: f64 =
                 0.0001 * (deletable_clauses.len() as f64) / (self.original_clause_count as f64);
-            // dbg!(cutoff);
             for index in deletable_clauses {
                 let x = rand::random::<f64>();
-                // dbg!(x);
                 if x < cutoff {
                     filtered_deleteable_clauses.insert(index);
                 }
             }
-            // dbg!(&filtered_deleteable_clauses);
             self.forget_clause(&filtered_deleteable_clauses);
         }
 
         // Decay all activity values
         for i in 0..self.vars() * 2 {
-            self.activitylist[i] *= 0.9;
+            self.activitylist[i] *= 0.50;
         }
 
         return true;
@@ -362,52 +370,10 @@ impl SolverState {
 impl ToString for SolverState {
     fn to_string(&self) -> String {
         let mut buf = "".to_owned();
-        // buf = buf + "Clauses:\n";
-        // for clause in &self.clauselist {
-        //     for var in &clause.vars {
-        //         buf = buf + &var.to_string() + " ";
-        //     }
-        //     buf = buf + "\n";
-        // }
         buf = buf + "\nAssignment:\n";
 
         let assignment = Assignment::from_movelist(&self.get_movelist(), self.vars());
         buf = buf + &assignment.to_string();
         return buf.to_string();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::{
-        assignment::Assignment,
-        clause::{self, AssignmentResult, Clause},
-        solver_state::SolverMove,
-    };
-
-    use super::SolverState;
-
-    #[test]
-    fn example_test() {
-        let result = 2 + 2;
-        assert_eq!(result, 4);
-    }
-
-    #[test]
-    fn cdcl_conflict() {
-        let clause1 = Clause::from_vec(Vec::from([1]));
-        let clause2 = Clause::from_vec(Vec::from([-1, 2]));
-        let clause3 = Clause::from_vec(Vec::from([-3, 4]));
-        let clause4 = Clause::from_vec(Vec::from([-5, -6]));
-        let clause5 = Clause::from_vec(Vec::from([-1, -5, 7]));
-        let clause6 = Clause::from_vec(Vec::from([-2, -5, 6, -7]));
-        let clauses = Vec::from([clause1, clause2, clause3, clause4, clause5, clause6]);
-        let state = SolverState {
-            clauselist: clauses,
-            movelist: Vec::new(),
-            activitylist: vec![0.0; 7],
-            vars: 7,
-            original_clause_count: 6,
-        };
     }
 }

@@ -10,7 +10,7 @@ use clause::{AssignmentResult, Clause};
 use solver_state::SolverState;
 
 use crate::solver_state::SolverMove;
-
+use std::time::Instant;
 mod assignment;
 mod clause;
 mod solver_state;
@@ -28,7 +28,7 @@ fn main() {
     }
 
     let mut state = initial_config.unwrap();
-    // println!("{}", state.to_string());
+    let begin_time = Instant::now();
     let mut moves: usize = 0;
     loop {
         let next_move = move_from_state(&state);
@@ -42,6 +42,8 @@ fn main() {
                 state.add_move(SolverMove::Decide(var))
             }
             SolverMove::Sat() => {
+                let elapsed = begin_time.elapsed();
+                println!("Time elapsed: {:.4?}", elapsed);
                 println!("Moves: {}\nClauses added:{}\n{}", moves, state.clauselist().len() - state.original_clause_count, state.to_string());
                 return;
             }
@@ -49,6 +51,8 @@ fn main() {
                 if state.resolve_conflict_cdcl(index) {
                     continue;
                 } else {
+                    let elapsed = begin_time.elapsed();
+                    println!("Time elapsed: {:.4?}", elapsed);
                     println!("Moves: {}\nUnsat", moves);
                     return;
                 }
@@ -57,7 +61,6 @@ fn main() {
         }
         moves += 1;
     }
-    // dbg!(args);
 }
 
 fn parse_input(path: &str) -> Result<SolverState, Box<dyn Error>> {
@@ -97,7 +100,6 @@ fn parse_input(path: &str) -> Result<SolverState, Box<dyn Error>> {
                 Ok(val) => {
                     initial_state.set_vars(val);
                     let activity_vec = vec![0.0; val * 2];
-                    // activity_vec[0] = 0.01;
                     initial_state.set_activity(activity_vec);
                 }
                 Err(_) => return Err(format!("Variable count must be a number").into()),
@@ -124,7 +126,6 @@ fn parse_input(path: &str) -> Result<SolverState, Box<dyn Error>> {
             };
         }
         initial_state.add_clause(Clause::from_vec(clause));
-        // dbg!(clause);
     }
 
     Ok(initial_state)
@@ -135,7 +136,9 @@ fn move_from_state(state: &SolverState) -> SolverMove {
     let mut sat_clauses = 0;
 
     let mut clause_status = vec![false; state.clauses()]; // True indicates the clause is sat
-                                                          // Loop through clauses and check for possible propagates or conflicts
+    
+    
+    // Loop through clauses and check for possible propagates or conflicts
     for clause_index in 0..state.clauselist().len() {
         let clause = &state.clauselist()[clause_index];
         let clause_result = clause.check_assignment(&assignment);
@@ -162,13 +165,6 @@ fn move_from_state(state: &SolverState) -> SolverMove {
         return SolverMove::Sat();
     }
 
-    // If no move found decide
-    for var in 1..=assignment.len() {
-        if assignment[var].is_none() {
-            return SolverMove::Decide(var as i32);
-        }
-    }
-
     // let var = decide_first_unsat(&assignment, &clause_status, state.clauselist());
     // let var = decide_bohm(&assignment, &clause_status, state.clauselist());
     let var = decide_activity(&assignment, state, &clause_status, state.clauselist());
@@ -181,7 +177,7 @@ fn decide_first_unsat(
     clause_status: &Vec<bool>,
     clauses: &Vec<Clause>,
 ) -> i32 {
-    for index in 1..clause_status.len() {
+    for index in 0..clause_status.len() {
         if clause_status[index] {
             // Skip over sat clauses
             continue;
@@ -199,30 +195,8 @@ fn decide_first_unsat(
 
 #[allow(dead_code)]
 fn decide_bohm(assignment: &Assignment, clause_status: &Vec<bool>, clauses: &Vec<Clause>) -> i32 {
-    // println!("Begin bohm with assignment {}", assignment.to_string());
     let alpha = 1;
     let beta = 2;
-    // let mut length_to_clause_map: HashMap<usize, Vec<Clause>> = HashMap::new();
-    // for index in 0..clauses.len() {
-    //     if clause_status[index] {
-    //         continue;
-    //     }
-    //     let clause = &clauses[index];
-    //     let mut adjusted_list: Vec<i32> = Vec::new();
-    //     for var in &clause.vars {
-    //         let val = *var;
-    //         let assignment_index: usize = val.abs().try_into().unwrap();
-    //         if assignment[assignment_index].is_none(){
-    //             adjusted_list.push(val);
-    //         }
-    //     }
-    //     let adjusted_clause = Clause::from_vec(adjusted_list);
-    //     let length = adjusted_clause.vars.len();
-    //     if !length_to_clause_map.contains_key(&length){
-    //         length_to_clause_map.insert(length, Vec::new());
-    //     }
-    //     length_to_clause_map.get_mut(&length).unwrap().push(adjusted_clause);
-    // }
 
     let mut var_to_count_map_map: HashMap<i32, HashMap<usize, usize>> = HashMap::new();
     // Generate "Vectors" of counts in clauses of size n
@@ -266,11 +240,12 @@ fn decide_bohm(assignment: &Assignment, clause_status: &Vec<bool>, clauses: &Vec
         }
         let best_map = var_to_count_map_map.get(&best_var).unwrap_or(&empty);
         let best_map_inv = var_to_count_map_map.get(&(best_var * -1)).unwrap_or(&empty);
+
         let cur: i32 = index.try_into().unwrap();
         let cur_inv: i32 = cur * -1;
-        // println!("{}",cur);
         let cur_map = var_to_count_map_map.get(&cur).unwrap_or(&empty);
         let cur_map_inv = var_to_count_map_map.get(&cur_inv).unwrap_or(&empty);
+
         for len in 1..=max_clause_len {
             let h_cur = match cur_map.get(&len) {
                 Some(count) => *count,
@@ -329,36 +304,38 @@ fn decide_bohm(assignment: &Assignment, clause_status: &Vec<bool>, clauses: &Vec
 fn decide_activity(assignment: &Assignment, state: &SolverState, clause_status: &Vec<bool>, clauses: &Vec<Clause>) -> i32 {
     let mut best_activity = 0.0;
     let mut best_var: i32 = 0;
-    // dbg!(state.activity());
+
+    // Check activity of all literals
     for i in 0..state.vars() {
+        let var = <usize as TryInto<i32>>::try_into(i).unwrap() + 1;
         if assignment[i + 1].is_some() {
             continue;
         }
-        let var_activty = state.activity()[i];
+        let var_activty = state.get_activity(var);
         if var_activty > best_activity {
             best_activity = var_activty;
-            best_var = <usize as TryInto<i32>>::try_into(i).unwrap() + 1;
+            best_var = var;
         }
     }
 
     for i in 0..state.vars() {
-        let index = i + state.vars();
+        let var =(<usize as TryInto<i32>>::try_into(i).unwrap() + 1) * -1;
         if assignment[i + 1].is_some() {
             continue;
         }
-        let var_activty = state.activity()[index];
+        let var_activty = state.get_activity(var);
         if var_activty > best_activity {
             best_activity = var_activty;
-            best_var = (<usize as TryInto<i32>>::try_into(i).unwrap() + 1) * -1;
+            best_var = var
         }
     }
     
+    // If a literal could not be decided on, use bohm
+    // This will only happen as the solver is starting
     if best_var == 0 {
         let output =  decide_bohm(assignment, clause_status, clauses);
-        // dbg!(output);
         return output;
         
     }
-    // dbg!(best_var);
     return best_var;
 }
